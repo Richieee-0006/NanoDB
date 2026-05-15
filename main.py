@@ -1,12 +1,15 @@
 from datetime import date
 from decimal import Decimal
+from mixins import SequenceToStringMixin
 
 from nanodb import Column, ColumnType, DataType, Table
 
+class TableWithRepr(Table, SequenceToStringMixin):
+    pass
 
 def main() -> None:
     """Create sample tables, insert data, and demonstrate inner join."""
-    customer = Table(
+    customer = TableWithRepr(
         "customer",
         [
             Column("id", ColumnType(DataType.INT, not_null=True, unique=True)),
@@ -86,6 +89,9 @@ def main() -> None:
 
     ac = customer.where(lambda row: row["name"].startswith("A"))
     print(ac.to_text())
+
+    print(repr(order_tbl))
+    print(repr(customer))
 
 
 if __name__ == "__main__":

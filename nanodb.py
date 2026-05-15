@@ -84,7 +84,7 @@ def has_duplicates(items: Collection[str]) -> bool:
     return len(items) != len(set(items))
 
 
-class Table:
+class Table(Sequence):
     """
     Simple in-memory relational table.
 
@@ -161,9 +161,15 @@ class Table:
         """Return an iterator over table rows."""
         return iter(self._rows)
 
+    def __reversed__(self) -> Iterator[Row]:
+        return reversed(self._rows)
+
     def __len__(self) -> int:
         """Return the number of rows in the table."""
         return len(self._rows)
+
+    def __getitem__(self, index: int) -> Row:
+        return self._rows[index]
 
     def insert(self, column_names: Sequence[str], values: Row) -> None:
         """
