@@ -3,55 +3,134 @@ from decimal import Decimal
 from enum import Enum
 from collections.abc import Collection, Sequence
 from typing import TypeAlias, Iterator, Callable, Mapping
-from zoneinfo import reset_tzpath
 
+# Type aliases for better readability and consistent type checking across the library.
+# Value represents any scalar data type that can be stored in a table cell.
 Value: TypeAlias = None | int | Decimal | str | date
+# Row represents a single record in a table, stored as an immutable tuple of values.
 Row: TypeAlias = tuple[Value, ...]
 
 def value_to_text(value: Value) -> str:
-    """Convert one database value to its text representation."""
+    """
+    Convert a single database value to its human-readable text representation.
+    
+    This function handles the conversion of various types (int, Decimal, str, date)
+    into a string suitable for display in the CLI. Special care is taken for 
+    NULL values (represented as None in Python).
+    
+    Args:
+        value (Value): The database value to convert.
+        
+    Returns:
+        str: "NULL" if the value is None, otherwise the standard string representation.
+    """
+    # Check for None first to return the SQL-style NULL indicator.
     if value is None:
         return "NULL"
+    # For all other types, use Python's built-in string conversion.
     return str(value)
 
 
 def row_to_texts(row: Row) -> list[str]:
-    """Convert one table row to a list of strings."""
+    """
+    Convert an entire database row (tuple of values) into a list of strings.
+    
+    This utility function applies `value_to_text` to every element in a row,
+    preparing the data for alignment and display in an ASCII table.
+    
+    Args:
+        row (Row): A tuple of database values.
+        
+    Returns:
+        list[str]: A list of strings corresponding to the values in the row.
+    """
+    # Use list comprehension to transform every value in the tuple.
     return [value_to_text(value) for value in row]
 
 
 def compute_column_widths(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[int]:
-    """Compute display widths for all columns."""
+    """
+    Calculate the optimal display width for every column in a table.
+    
+    The width of a column is determined by the maximum length of either its 
+    header name or any value currently stored in that column across all rows.
+    
+    Args:
+        headers (Sequence[str]): The names of the table columns.
+        rows (Sequence[Sequence[str]]): The row data, already converted to strings.
+        
+    Returns:
+        list[int]: A list of integers where each index corresponds to the required 
+                  width of the column at that index.
+    """
+    # Initialize widths with the length of the headers.
     widths = [len(header) for header in headers]
 
+    # Iterate through each row and each cell to find the maximum width.
     for row in rows:
         for i, value in enumerate(row):
+            # Update the width at index 'i' if the current value is longer.
             widths[i] = max(widths[i], len(value))
 
     return widths
 
 
 def make_separator(widths: Sequence[int]) -> str:
-    """Create a horizontal separator line."""
+    """
+    Generate a horizontal separator line for the ASCII table display.
+    
+    Constructs a line like "+---+-------+" using the calculated column widths.
+    
+    Args:
+        widths (Sequence[int]): The list of required widths for each column.
+        
+    Returns:
+        str: A formatted separator string.
+    """
+    # Create segments of dashes for each column, adding padding (+2 for spaces).
     parts = ["-" * (width + 2) for width in widths]
+    # Join parts with '+' and wrap with '+' on both ends.
     return "+" + "+".join(parts) + "+"
 
 
 def make_data_line(values: Sequence[str], widths: Sequence[int]) -> str:
-    """Create one formatted table line."""
+    """
+    Format a single row of data as a piped ASCII string.
+    
+    Constructs a line like "| Val | Data  |" with appropriate padding and alignment.
+    
+    Args:
+        values (Sequence[str]): The string values to display in the line.
+        widths (Sequence[int]): The widths for each column to ensure alignment.
+        
+    Returns:
+        str: A formatted data line string.
+    """
+    # Use f-string formatting to left-align the value within its allocated width.
     cells = [f" {value:<{width}} " for value, width in zip(values, widths)]
+    # Join cells with '|' and wrap with '|' on both ends.
     return "|" + "|".join(cells) + "|"
 
 class DataType(Enum):
-    """Supported database data domains."""
-    INT = 0
-    DECIMAL = 1
-    TEXT = 2
-    DATE = 3
+    """
+    Enumeration of supported relational data domains.
+    
+    This Enum provides a stable set of identifiers for the data types that
+    the NanoDB engine knows how to validate and store.
+    """
+    INT = 0      # Integer values (int)
+    DECIMAL = 1  # Fixed-point decimal values (Decimal)
+    TEXT = 2     # String values (str)
+    DATE = 3     # Date values (datetime.date)
 
 
 class ColumnType:
-    """Description of a database column type."""
+    """
+    Description of a database column's domain and constraints.
+    
+    This class acts as a configuration object for a column, specifying 
+    what kind of data it holds and what rules (constraints) apply to it.
+    """
 
     def __init__(
         self,
@@ -59,18 +138,40 @@ class ColumnType:
         not_null: bool = False,
         unique: bool = False,
     ) -> None:
+        """
+        Initialize a column type definition.
+        
+        Args:
+            data_type (DataType): The expected data type for this column.
+            not_null (bool): If True, None (NULL) values are forbidden.
+            unique (bool): If True, every non-NULL value in the column must be unique.
+        """
         self.data_type = data_type
         self.not_null = not_null
         self.unique = unique
 
 
 class Column:
-    """Definition of one table column."""
+    """
+    Definition of a single table column, including its name and type.
+    
+    Combines a name identifier with a ColumnType to fully define a 
+    component of a table's schema.
+    """
 
     def __init__(self, name: str, column_type: ColumnType) -> None:
+        """
+        Initialize a column definition.
+        
+        Args:
+            name (str): The name of the column.
+            column_type (ColumnType): The type and constraint configuration.
+        """
         self.name = name
         self.column_type = column_type
 
+# Internal mapping used to perform type validation during insertion.
+# Maps DataType enums to the corresponding Python classes.
 TYPE_INFO: dict[DataType, type] = {
         DataType.INT: int,
         DataType.DECIMAL: Decimal,
@@ -80,21 +181,31 @@ TYPE_INFO: dict[DataType, type] = {
 
 
 def has_duplicates(items: Collection[str]) -> bool:
-    """Return True if the collection contains duplicate values."""
+    """
+    Check if a collection of strings contains any duplicate values.
+    
+    Used primarily for validating schema definitions (e.g., column names).
+    
+    Args:
+        items (Collection[str]): The collection to check.
+        
+    Returns:
+        bool: True if duplicates exist, False otherwise.
+    """
+    # Comparing length to the size of a set (which filters duplicates).
     return len(items) != len(set(items))
 
 
 class Table(Sequence):
     """
-    Simple in-memory relational table.
-
-    Schema:
-        - table name
-        - ordered sequence of columns
-        - primary key (sequence of column names)
-
-    Data:
-        - rows stored as tuples
+    A simple in-memory relational table implementation.
+    
+    A Table consists of a schema (ordered columns and a primary key) 
+    and data (rows stored as tuples). It enforces relational integrity 
+    rules during data modification.
+    
+    The Table class implements the Sequence protocol, meaning it can be 
+    treated like a read-only list of rows (supporting len, index access, etc.).
     """
 
     def __init__(
@@ -102,6 +213,22 @@ class Table(Sequence):
         name: str,
         columns: Sequence[Column],
         primary_key: Sequence[str]):
+        """
+        Initialize a new Table with a name and schema.
+        
+        This constructor performs extensive validation on the provided schema 
+        to ensure it is logically consistent (e.g., unique column names, 
+        valid primary key columns).
+        
+        Args:
+            name (str): The name of the table.
+            columns (Sequence[Column]): List of column definitions.
+            primary_key (Sequence[str]): Column names that form the primary key.
+            
+        Raises:
+            ValueError: If the schema is invalid (empty, duplicate names, unknown PK columns).
+        """
+        # 1. Basic schema validation.
         if not columns:
             raise ValueError("Table must have at least one column.")
 
@@ -109,14 +236,17 @@ class Table(Sequence):
         if has_duplicates(column_names):
             raise ValueError("Column names must be unique.")
 
+        # 2. Storage initialization.
         self.name = name
         self._columns = columns
+        # O(1) maps for performance during validation and joins.
         self._column_map = {column.name: column for column in columns}
         self._column_index = {
             column.name: index for index, column in enumerate(columns)
         }
         self._rows: list[Row] = []
 
+        # 3. Primary Key validation.
         if not primary_key:
             raise ValueError("Primary key must contain at least one column.")
 
@@ -129,305 +259,481 @@ class Table(Sequence):
 
         self._primary_key = tuple(primary_key)
 
+        # 4. Strict Primary Key rules (NOT NULL / UNIQUE requirements).
         if len(self._primary_key) == 1:
             pk_col = self._column_map[self._primary_key[0]]
             if not pk_col.column_type.not_null:
-                raise ValueError(
-                    "Single-column primary key must be NOT NULL."
-                )
+                raise ValueError("Single-column primary key must be NOT NULL.")
             if not pk_col.column_type.unique:
-                raise ValueError(
-                    "Single-column primary key must be UNIQUE."
-                )
+                raise ValueError("Single-column primary key must be UNIQUE.")
         else:
             for col_name in self._primary_key:
                 col = self._column_map[col_name]
                 if not col.column_type.not_null:
-                    raise ValueError(
-                        f"Primary key column {col_name!r} must be NOT NULL."
-                    )
+                    raise ValueError(f"Primary key column {col_name!r} must be NOT NULL.")
 
     @property
     def columns(self) -> Sequence[Column]:
-        """Return ordered columns."""
+        """
+        Returns the table's column definitions in their defined order.
+        
+        Returns:
+            Sequence[Column]: A tuple of the table's columns.
+        """
         return tuple(self._columns)
 
     @property
     def primary_key(self) -> Sequence[str]:
-        """Return primary key columns."""
+        """
+        Returns the names of the columns that form the primary key.
+        
+        Returns:
+            Sequence[str]: The primary key column names.
+        """
         return self._primary_key
 
     def __iter__(self) -> Iterator[Row]:
-        """Return an iterator over table rows."""
+        """
+        Allows iterating over the table's rows.
+        
+        Returns:
+            Iterator[Row]: An iterator over the internal row storage.
+        """
         return iter(self._rows)
 
     def __reversed__(self) -> Iterator[Row]:
+        """
+        Allows iterating over the table's rows in reverse order.
+        
+        Returns:
+            Iterator[Row]: A reverse iterator over the internal row storage.
+        """
         return reversed(self._rows)
 
     def __len__(self) -> int:
-        """Return the number of rows in the table."""
+        """
+        Returns the total number of rows currently in the table.
+        
+        Returns:
+            int: Row count.
+        """
         return len(self._rows)
 
     def __getitem__(self, index: int) -> Row:
+        """
+        Provides index-based access to table rows.
+        
+        Args:
+            index (int): The 0-based index of the row.
+            
+        Returns:
+            Row: The row tuple at the specified index.
+        """
         return self._rows[index]
 
     def insert(self, column_names: Sequence[str], values: Row) -> None:
         """
-        Insert one row into the table.
-
-        Missing columns are filled with None.
+        Insert a new row into the table.
+        
+        This method performs the following steps:
+        1. Validates that column names and values match in length.
+        2. Checks that provided column names exist in the schema.
+        3. Fills missing columns with None (NULL).
+        4. Validates data types and NOT NULL constraints.
+        5. Enforces UNIQUE and Primary Key uniqueness across the table.
+        
+        Args:
+            column_names (Sequence[str]): The names of the columns being provided.
+            values (Row): The values to insert for those columns.
+            
+        Raises:
+            ValueError: If constraints are violated or input is malformed.
+            TypeError: If a value's type doesn't match the schema.
         """
-        if len(column_names) != len(values):
-            raise ValueError("column_names and values must have the same length.")
-
-        if has_duplicates(column_names):
-            raise ValueError("Column names in INSERT must be unique.")
+        # Basic input validation.
+        if len(column_names) != len(values) or has_duplicates(column_names):
+            raise ValueError("Invalid column_names or values for INSERT.")
 
         for col_name in column_names:
             if col_name not in self._column_map:
                 raise ValueError(f"Unknown column {col_name!r}.")
 
+        # Map input values to the correct row structure.
         value_map = dict(zip(column_names, values))
-        row: list[Value] = []
+        row_data: list[Value] = []
 
         for column in self._columns:
             value = value_map.get(column.name, None)
             self._validate_value(column, value)
-            row.append(value)
+            row_data.append(value)
 
-        row_tuple: Row = tuple(row)
-        self._check_unique_constraints(row_tuple)
-        self._check_primary_key_uniqueness(row_tuple)
-        self._rows.append(row_tuple)
+        # Final tuple and uniqueness checks.
+        new_row: Row = tuple(row_data)
+        self._check_unique_constraints(new_row)
+        self._check_primary_key_uniqueness(new_row)
+        self._rows.append(new_row)
 
     @staticmethod
     def _validate_value(column: Column, value: Value) -> None:
         """
-        Validate one value against a column definition.
-
-        None represents SQL NULL.
+        Validate a single value against its column's definition.
+        
+        Checks both for NULL constraints and correct Python types.
+        
+        Args:
+            column (Column): The column definition to check against.
+            value (Value): The value to validate.
+            
+        Raises:
+            ValueError: If a NOT NULL constraint is violated.
+            TypeError: If the value type is incorrect.
         """
         col_type = column.column_type
 
+        # NULL check.
         if value is None:
             if col_type.not_null:
                 raise ValueError(f"Column {column.name!r} cannot be NULL.")
             return
 
+        # Type check using TYPE_INFO mapping.
         expected_type = TYPE_INFO.get(col_type.data_type)
-        if expected_type is None:
-            raise TypeError(f"Unsupported data type in column {column.name!r}.")
-
         if not isinstance(value, expected_type):
-            raise TypeError(f"Column {column.name!r} expects {expected_type.__name__}.")
+            raise TypeError(f"Column {column.name!r} expects {expected_type.__name__}, got {type(value).__name__}.")
 
     def _check_unique_constraints(self, new_row: Row) -> None:
-        """Check UNIQUE constraints for all columns."""
+        """
+        Enforce UNIQUE constraints for all columns marked as unique.
+        
+        Iterates through the table to ensure the new value doesn't already exist.
+        NULL values are ignored as they are allowed to repeat in UNIQUE columns.
+        
+        Args:
+            new_row (Row): The row tuple being inserted.
+            
+        Raises:
+            ValueError: If a UNIQUE constraint is violated.
+        """
         for column in self._columns:
             if not column.column_type.unique:
                 continue
 
-            index = self._column_index[column.name]
-            new_value = new_row[index]
+            idx = self._column_index[column.name]
+            val = new_row[idx]
 
-            if new_value is None:
+            if val is None:
                 continue
 
             for row in self._rows:
-                if row[index] == new_value:
+                if row[idx] == val:
                     raise ValueError(f"UNIQUE constraint violated for column {column.name!r}.")
 
     def _check_primary_key_uniqueness(self, new_row: Row) -> None:
-        """Check uniqueness of the primary key."""
-        pk_indexes = self._indexes_for(self._primary_key)
-        new_key = self._extract_key(new_row, pk_indexes)
+        """
+        Enforce uniqueness for the table's Primary Key.
+        
+        Extracts the PK components from the new row and checks against all existing rows.
+        Also ensures no part of the primary key is NULL.
+        
+        Args:
+            new_row (Row): The row tuple being inserted.
+            
+        Raises:
+            ValueError: If the PK is duplicate or contains NULL.
+        """
+        pk_idxs = self._indexes_for(self._primary_key)
+        new_pk_val = self._extract_key(new_row, pk_idxs)
 
-        if any(value is None for value in new_key):
+        if any(v is None for v in new_pk_val):
             raise ValueError("Primary key cannot contain NULL.")
 
         for row in self._rows:
-            if self._extract_key(row, pk_indexes) == new_key:
+            if self._extract_key(row, pk_idxs) == new_pk_val:
                 raise ValueError("Duplicate primary key.")
 
     def _indexes_for(self, column_names: Sequence[str]) -> Sequence[int]:
-        """Return tuple of column indexes for given column names."""
+        """
+        Helper to map a sequence of column names to their integer indexes.
+        
+        Args:
+            column_names (Sequence[str]): Names of the columns.
+            
+        Returns:
+            Sequence[int]: The corresponding indexes in a row tuple.
+        """
         return tuple(self._column_index[name] for name in column_names)
 
     @staticmethod
     def _extract_key(row: Row, indexes: Sequence[int]) -> Row:
-        """Extract a key tuple from a row using given indexes."""
-        return tuple(row[index] for index in indexes)
+        """
+        Helper to extract a subset of values from a row based on indexes.
+        
+        Args:
+            row (Row): The full row tuple.
+            indexes (Sequence[int]): The indexes of values to extract.
+            
+        Returns:
+            Row: A tuple containing only the selected values.
+        """
+        return tuple(row[idx] for idx in indexes)
 
     def inner_join(self, other: 'Table', other_foreign_key: Sequence[str]) -> 'Table':
         """
-        Perform an inner join using self.primary_key and other_foreign_key.
-
-        The table `other` is treated as the referencing table:
-        its columns in `other_foreign_key` reference `self.primary_key`.
-
-        Rows from `other` with NULL in any foreign-key column are ignored.
-
-        Result schema:
-            - name: 'selfname_othername'
-            - columns: prefixed as 'table.column'
-            - primary key: union of both original primary keys with prefixes
+        Perform a relational INNER JOIN with another table.
+        
+        The current table (`self`) is treated as the primary table (referenced),
+        and the `other` table is treated as the referencing table. The join
+        condition is: self.primary_key = other.other_foreign_key.
+        
+        Args:
+            other (Table): The table to join with.
+            other_foreign_key (Sequence[str]): Columns in 'other' that reference self's PK.
+            
+        Returns:
+            Table: A new table containing the combined rows.
         """
+        # 1. Verification and Setup.
         self._validate_join_columns(other, other_foreign_key)
-
         result = self._create_join_result_table(other)
+        
+        # 2. Performance Optimization: Build a lookup map for self's rows by PK.
         lookup = self._build_primary_key_lookup()
-        other_fk_indexes = other._indexes_for(other_foreign_key)
+        other_fk_idxs = other._indexes_for(other_foreign_key)
 
+        # 3. Join Loop: Iterate 'other' and match against 'self' via the lookup.
         for other_row in other._rows:
-            foreign_key_value = other._extract_key(other_row, other_fk_indexes)
+            fk_val = other._extract_key(other_row, other_fk_idxs)
 
-            if not any(value is None for value in foreign_key_value):
-                self_row = lookup.get(foreign_key_value)
-                if self_row is not None:
-                    result._rows.append(self_row + other_row)
+            if not any(v is None for v in fk_val):
+                match = lookup.get(fk_val)
+                if match is not None:
+                    # Combine tuples and store in result.
+                    result._rows.append(match + other_row)
 
         return result
 
     def to_text(self) -> str:
-        """Return the table formatted as an ASCII text table."""
-        headers = [column.name for column in self._columns]
-        rows_as_text = [row_to_texts(row) for row in self._rows]
-        widths = compute_column_widths(headers, rows_as_text)
+        """
+        Render the table contents as a formatted ASCII grid.
+        
+        Returns:
+            str: The string representation of the table.
+        """
+        headers = [c.name for c in self._columns]
+        rows_txt = [row_to_texts(r) for r in self._rows]
+        widths = compute_column_widths(headers, rows_txt)
 
-        separator = make_separator(widths)
-        header_line = make_data_line(headers, widths)
-
-        lines = [separator, header_line, separator]
-        for row in rows_as_text:
-            lines.append(make_data_line(row, widths))
-        lines.append(separator)
+        sep = make_separator(widths)
+        lines = [sep, make_data_line(headers, widths), sep]
+        for r in rows_txt:
+            lines.append(make_data_line(r, widths))
+        lines.append(sep)
 
         return "\n".join(lines)
 
     def _validate_join_columns(self, other: 'Table', other_foreign_key: Sequence[str]) -> None:
-        """Validate that other_foreign_key correctly references self.primary_key."""
+        """
+        Internal helper to validate that a join operation is logically sound.
+        
+        Checks that the foreign key matches the primary key in length and data types.
+        """
         if len(other_foreign_key) != len(self._primary_key):
-            raise ValueError(
-                "Foreign key must have the same length as the primary key."
-            )
-
-        if has_duplicates(other_foreign_key):
-            raise ValueError("Foreign key columns must be unique.")
-
-        for col_name in other_foreign_key:
-            if col_name not in other._column_map:
-                raise ValueError(f"Unknown foreign key column {col_name!r}.")
+            raise ValueError("FK length must match PK length.")
 
         for self_pk_name, other_fk_name in zip(self._primary_key, other_foreign_key):
-            self_col = self._column_map[self_pk_name]
-            other_col = other._column_map[other_fk_name]
-
-            if self_col.column_type.data_type != other_col.column_type.data_type:
-                raise TypeError(
-                    f"Type mismatch between {self.name}.{self_pk_name!r} "
-                    f"and {other.name}.{other_fk_name!r}."
-                )
+            s_col = self._column_map[self_pk_name]
+            o_col = other._column_map[other_fk_name]
+            if s_col.column_type.data_type != o_col.column_type.data_type:
+                raise TypeError(f"Type mismatch: {s_col.column_type.data_type} vs {o_col.column_type.data_type}")
 
     def _create_join_result_table(self, other: 'Table') -> 'Table':
-        """Create the empty result table for an inner join."""
-        result_name = f"{self.name}_{other.name}"
-        result_columns = (
-            self._prefixed_columns(self.name) +
-            other._prefixed_columns(other.name)
-        )
-        result_primary_key = (
-            self._prefixed_primary_key(self.name) +
-            other._prefixed_primary_key(other.name)
-        )
-
-        return Table(
-            name=result_name,
-            columns=result_columns,
-            primary_key=result_primary_key,
-        )
+        """
+        Internal helper to construct the empty result table for a join.
+        
+        Generates prefixed column names (table.column) and a combined primary key.
+        """
+        res_name = f"{self.name}_{other.name}"
+        res_cols = self._prefixed_columns(self.name) + other._prefixed_columns(other.name)
+        res_pk = self._prefixed_primary_key(self.name) + other._prefixed_primary_key(other.name)
+        return Table(name=res_name, columns=res_cols, primary_key=res_pk)
 
     def _prefixed_columns(self, table_name: str) -> list[Column]:
-        """
-        Return columns prefixed by table name.
-        """
-        result = []
-        for column in self._columns:
-            result.append(
-                Column(
-                    f"{table_name}.{column.name}",
-                    ColumnType(
-                        data_type=column.column_type.data_type,
-                        not_null=column.column_type.not_null,
-                        unique=False, # UNIQUE is not preserved in join results!
-                    ),
-                )
-            )
-        return result
+        """Returns columns with names prefixed by the table name."""
+        return [Column(f"{table_name}.{c.name}", ColumnType(c.column_type.data_type, c.column_type.not_null, False)) for c in self._columns]
 
     def _prefixed_primary_key(self, table_name: str) -> list[str]:
-        """Return primary-key column names prefixed by table name."""
-        return [f"{table_name}.{col_name}" for col_name in self._primary_key]
+        """Returns primary key names prefixed by the table name."""
+        return [f"{table_name}.{pk}" for pk in self._primary_key]
 
     def _build_primary_key_lookup(self) -> dict[Row, Row]:
-        """Build a hash lookup from primary-key value to row."""
-        pk_indexes = self._indexes_for(self._primary_key)
-        lookup = {}
-
-        for row in self._rows:
-            key = self._extract_key(row, pk_indexes)
-            lookup[key] = row
-
-        return lookup
+        """Creates a dictionary mapping PK values to the entire row for fast joining."""
+        pk_idxs = self._indexes_for(self._primary_key)
+        return {self._extract_key(r, pk_idxs): r for r in self._rows}
 
     def _row_to_mapping(self, row: Row) -> Mapping[str, Value]:
-        """Convert one row tuple to a dictionary keyed by column names.
-        protected method (used in derived classes)"""
-        return {
-            column.name: value
-            for column, value in zip(self._columns, row)
-        }
+        """Converts a row tuple into a dict keyed by column names."""
+        return {c.name: v for c, v in zip(self._columns, row)}
 
     def where(self, predicate: Callable[[Mapping[str, Value]], bool]) -> 'Table':
-        """Return a new table containing only rows satisfying the predicate."""
-        result = Table(self.name, self._columns, self._primary_key)
-
-        for row in self._rows:
-            if predicate(self._row_to_mapping(row)):
-                result._rows.append(row)
-
-        return result
-
-    def select_to(
-            self,
-            transform: Callable[[Mapping[str, Value]], Mapping[str, Value]],
-            target: 'Table',
-    ) -> 'Table':
         """
-        Project rows of this table into the target table.
-
-        The function ``transform`` defines how one source row is projected to one
-        row of the target table. It receives a mapping from source column names
-        to source values and returns a mapping from target column names to target
-        values.
-
-        The returned mapping must describe a row compatible with the schema of
-        the target table:
-        target column names must be valid, returned values must have appropriate
-        types, and all constraints of the target table must be satisfied.
-
+        Filter rows based on a condition function.
+        
         Args:
-            transform: Function defining the projection from a source row to a
-                target row.
-            target: Table representing the schema of the projection result.
-
+            predicate: A function that takes a dict (column: value) and returns bool.
+            
         Returns:
-            The target table extended by projected rows.
+            Table: A new table containing only matching rows.
         """
-        ...
+        res = Table(self.name, self._columns, self._primary_key)
+        for r in self._rows:
+            if predicate(self._row_to_mapping(r)):
+                res._rows.append(r)
+        return res
 
     def get_column(self, column_name: str) -> Sequence[Value]:
-        result = []
-        index = self._column_index[column_name]
-        for row in self._rows:
-            result.append(row[index])
-        return result
+        """
+        Extract all values for a specific column as a sequence.
+        
+        Args:
+            column_name (str): The name of the column.
+            
+        Returns:
+            Sequence[Value]: All values in that column across all rows.
+        """
+        idx = self._column_index[column_name]
+        return [r[idx] for r in self._rows]
+
+    def intersection(self, other: 'Table') -> 'Table':
+        """
+        Create a new table that is the intersection of two tables.
+        
+        Both tables must be compatible:
+        - Same column names, types, and constraints at each position.
+        - Same primary key.
+        """
+        # Compatibility check: columns
+        if len(self._columns) != len(other._columns):
+            raise ValueError("Tables have different number of columns.")
+            
+        for c1, c2 in zip(self._columns, other._columns):
+            if c1.name != c2.name:
+                raise ValueError(f"Column name mismatch: {c1.name!r} vs {c2.name!r}.")
+            if c1.column_type.data_type != c2.column_type.data_type:
+                raise TypeError(f"Column type mismatch for {c1.name!r}: {c1.column_type.data_type} vs {c2.column_type.data_type}.")
+            if c1.column_type.not_null != c2.column_type.not_null:
+                raise ValueError(f"Column NOT NULL constraint mismatch for {c1.name!r}.")
+            if c1.column_type.unique != c2.column_type.unique:
+                raise ValueError(f"Column UNIQUE constraint mismatch for {c1.name!r}.")
+                
+        # Compatibility check: primary key
+        if self._primary_key != other._primary_key:
+            raise ValueError("Tables have different primary keys.")
+            
+        # Create result table
+        res = Table(f"{self.name}_intersection", self._columns, self._primary_key)
+        
+        # O(N + M) intersection using set of tuples
+        other_set = set(other._rows)
+        res._rows = [r for r in self._rows if r in other_set]
+        
+        return res
+
+    def bin_search(self, column_name: str, value: Value) -> 'Table':
+        """
+        Search for rows where the given column has the specified value using binary search.
+        Assumes the column is sorted in ascending order.
+        """
+        if column_name not in self._column_index:
+            raise ValueError(f"Unknown column {column_name!r}.")
+            
+        col_idx = self._column_index[column_name]
+        
+        # Helper to compare values including None (NULLS FIRST sorting assumption)
+        def compare(v1, v2):
+            if v1 is None and v2 is None:
+                return 0
+            if v1 is None:
+                return -1
+            if v2 is None:
+                return 1
+            if v1 < v2:
+                return -1
+            if v1 > v2:
+                return 1
+            return 0
+            
+        # Binary search for the first occurrence
+        low = 0
+        high = len(self._rows) - 1
+        first_idx = -1
+        
+        while low <= high:
+            mid = (low + high) // 2
+            comp = compare(self._rows[mid][col_idx], value)
+            if comp == 0:
+                first_idx = mid
+                high = mid - 1  # keep searching to the left
+            elif comp < 0:
+                low = mid + 1
+            else:
+                high = mid - 1
+                
+        if first_idx == -1:
+            return Table(f"{self.name}_search", self._columns, self._primary_key)
+            
+        # Binary search for the last occurrence
+        low = first_idx
+        high = len(self._rows) - 1
+        last_idx = first_idx
+        
+        while low <= high:
+            mid = (low + high) // 2
+            comp = compare(self._rows[mid][col_idx], value)
+            if comp == 0:
+                last_idx = mid
+                low = mid + 1  # keep searching to the right
+            elif comp < 0:
+                low = mid + 1
+            else:
+                high = mid - 1
+                
+        res = Table(f"{self.name}_search", self._columns, self._primary_key)
+        res._rows = self._rows[first_idx : last_idx + 1]
+        return res
+
+
+def aggregate(table: Table, column_name: str) -> Value:
+    """
+    Aggregate all values in a column.
+    - If numeric (INT, DECIMAL), returns the sum.
+    - If text or date (TEXT, DATE), returns a comma-separated string of representations.
+    None (NULL) values are ignored. If there are no non-None values:
+    - Returns 0 for numeric.
+    - Returns "" (empty string) for text/date.
+    """
+    if column_name not in table._column_index:
+        raise ValueError(f"Unknown column {column_name!r}.")
+        
+    col_idx = table._column_index[column_name]
+    column = table._column_map[column_name]
+    data_type = column.column_type.data_type
+    
+    # Gather non-None values
+    values = [row[col_idx] for row in table._rows if row[col_idx] is not None]
+    
+    is_numeric = data_type in (DataType.INT, DataType.DECIMAL)
+    
+    if not values:
+        if is_numeric:
+            if data_type == DataType.DECIMAL:
+                return Decimal("0")
+            return 0
+        return ""
+        
+    if is_numeric:
+        return sum(values)
+    else:
+        # Convert values to standard string representation
+        str_values = [value_to_text(v) for v in values]
+        return ",".join(str_values)
+
