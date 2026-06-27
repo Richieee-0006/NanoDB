@@ -655,7 +655,7 @@ class Table(Sequence):
                 self.insert(list(other._column_map.keys()), row)
             except Exception:
                 self._rows = old_rows
-                raise ValueError(Exception)
+                raise Exception
             
 
 def count_null(table: Table, columns: list[str]) -> dict[str, int]:
