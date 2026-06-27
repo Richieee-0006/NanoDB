@@ -647,7 +647,7 @@ class Table(Sequence):
             if this_name != other_name:
                 raise ValueError(f"Tabulky nejsou shodné, názvy {idx}. sloupců. ")
         for idx, (this_column, other_column) in enumerate(columns):
-            if this_column.data_type != other_column.data_type:
+            if this_column.column_type != other_column.column_type:
                 raise ValueError(f"Tabulky nejsou shodné, datové typy {idx}. sloupců. ")
         old_rows = list(self._rows)
         for row in other._rows:
