@@ -635,6 +635,21 @@ class Table(Sequence):
         Zajišťuje atomicitu (přidá buď všechny řádky, nebo žádný, pokud dojde k chybě).
         V případě nekompatibilních tabulek vyvolá výjimku ValueError.
         """
+        this_columns = self._column_map
+        other_columns = other._column_map
+        if len(self.columns) != len(other.columns):
+            raise ValueError("Tabulky musí mít stejné sloupce")
+        names = list(zip(this_columns.keys(), other_columns.keys()))
+        columns = list(zip(this_columns.values(), other_columns.values()))
+        
+        for idx, this_name, other_name in enumerate(names):
+            if this_name != other_name:
+                raise ValueError(f"Tabulky nejsou shodné, názvy {idx}. sloupců. ")
+        for idx, this_column, other_column in enumerate(columns):
+            if this_column.data_type != other_column.data_type:
+                raise ValueError(f"Tabulky nejsou shodné, datové typy {idx}. sloupců. ")
+        for row in other._rows:
+            self._rows = self._rows + row
         
 
 def count_null(table: Table, columns: list[str]) -> dict[str, int]:
@@ -642,15 +657,18 @@ def count_null(table: Table, columns: list[str]) -> dict[str, int]:
     Spočítá počet hodnot NULL (None) v určených sloupcích tabulky
     a vrátí slovník mapující jméno sloupce na počet hodnot NULL v tomto sloupci.
     """
-    
+    null_count = {}
     column_names = [column.name for column in table.columns]
+   
     for column in columns:
         if column not in column_names:
             raise ValueError(f"Column {column_name} not found in table {self.name}")
-        
+        count = 0
         col_values =  table.get_column(column)
         for value in col_values:
             if value is None:
-                null_count[column] += 1
+                count += 1
+        null_count[column] = count
         
+    return null_count
 
