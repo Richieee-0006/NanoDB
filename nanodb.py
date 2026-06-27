@@ -635,6 +635,7 @@ class Table(Sequence):
         Zajišťuje atomicitu (přidá buď všechny řádky, nebo žádný, pokud dojde k chybě).
         V případě nekompatibilních tabulek vyvolá výjimku ValueError.
         """
+        
         this_columns = self._column_map
         other_columns = other._column_map
         if len(self.columns) != len(other.columns):
@@ -645,12 +646,17 @@ class Table(Sequence):
         for idx, (this_name, other_name) in enumerate(names):
             if this_name != other_name:
                 raise ValueError(f"Tabulky nejsou shodné, názvy {idx}. sloupců. ")
-        for idx, this_column, other_column in enumerate(columns):
+        for idx, (this_column, other_column) in enumerate(columns):
             if this_column.data_type != other_column.data_type:
                 raise ValueError(f"Tabulky nejsou shodné, datové typy {idx}. sloupců. ")
+        old_rows = list(self._rows)
         for row in other._rows:
-            self.insert(other._column_map.keys(), row)
-        
+            try:
+                self.insert(list(other._column_map.keys()), row)
+            except Exception:
+                self._rows = old_rows
+                raise ValueError(Exception)
+            
 
 def count_null(table: Table, columns: list[str]) -> dict[str, int]:
     """
@@ -662,7 +668,7 @@ def count_null(table: Table, columns: list[str]) -> dict[str, int]:
    
     for column in columns:
         if column not in column_names:
-            raise ValueError(f"Column {column_name} not found in table {table.name}")
+            raise ValueError(f"Column {column} not found in table {table.name}")
         count = 0
         col_values =  table.get_column(column)
         for value in col_values:
