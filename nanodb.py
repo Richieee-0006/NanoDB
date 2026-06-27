@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from enum import Enum
 from collections.abc import Collection, Sequence
+from multiprocessing.spawn import get_command_line
 from typing import TypeAlias, Iterator, Callable, Mapping
 
 # Type aliases for better readability and consistent type checking across the library.
@@ -603,137 +604,53 @@ class Table(Sequence):
         idx = self._column_index[column_name]
         return [r[idx] for r in self._rows]
 
-    def intersection(self, other: 'Table') -> 'Table':
+    def test_prefix(self, column_name: str, prefix: str) -> None:
         """
-        Create a new table that is the intersection of two tables.
-        
-        Both tables must be compatible:
-        - Same column names, types, and constraints at each position.
-        - Same primary key.
+        Přidá do tabulky nový sloupec se jménem prefix_ok, který obsahuje
+        hodnotu 1, pokud daný textový sloupec začíná určitým prefixem,
+        jinak 0. Hodnota NULL se považuje za řetězec, který prefixu nevyhovuje.
         """
-        # Compatibility check: columns
-        if len(self._columns) != len(other._columns):
-            raise ValueError("Tables have different number of columns.")
-            
-        for c1, c2 in zip(self._columns, other._columns):
-            if c1.name != c2.name:
-                raise ValueError(f"Column name mismatch: {c1.name!r} vs {c2.name!r}.")
-            if c1.column_type.data_type != c2.column_type.data_type:
-                raise TypeError(f"Column type mismatch for {c1.name!r}: {c1.column_type.data_type} vs {c2.column_type.data_type}.")
-            if c1.column_type.not_null != c2.column_type.not_null:
-                raise ValueError(f"Column NOT NULL constraint mismatch for {c1.name!r}.")
-            if c1.column_type.unique != c2.column_type.unique:
-                raise ValueError(f"Column UNIQUE constraint mismatch for {c1.name!r}.")
-                
-        # Compatibility check: primary key
-        if self._primary_key != other._primary_key:
-            raise ValueError("Tables have different primary keys.")
-            
-        # Create result table
-        res = Table(f"{self.name}_intersection", self._columns, self._primary_key)
+        if column_name not in self._column_map.keys():
+            raise ValueError(f"Column {column_name} not found in table {self.name}")
         
-        # O(N + M) intersection using set of tuples
-        other_set = set(other._rows)
-        res._rows = [r for r in self._rows if r in other_set]
+        check_values = self.get_column(column_name)
+        # Přidání nového sloupce
+        novy_sloupec = Column("prefix_ok", ColumnType(DataType.INT))
+        self._columns.append(novy_sloupec)
+        self._column_map[novy_sloupec.name] = novy_sloupec
+        self._column_index[novy_sloupec.name] = len(self._columns) - 1
         
-        return res
-
-    def bin_search(self, column_name: str, value: Value) -> 'Table':
-        """
-        Search for rows where the given column has the specified value using binary search.
-        Assumes the column is sorted in ascending order.
-        """
-        if column_name not in self._column_index:
-            raise ValueError(f"Unknown column {column_name!r}.")
-            
-        col_idx = self._column_index[column_name]
-        
-        # Helper to compare values including None (NULLS FIRST sorting assumption)
-        def compare(v1, v2):
-            if v1 is None and v2 is None:
-                return 0
-            if v1 is None:
-                return -1
-            if v2 is None:
-                return 1
-            if v1 < v2:
-                return -1
-            if v1 > v2:
-                return 1
-            return 0
-            
-        # Binary search for the first occurrence
-        low = 0
-        high = len(self._rows) - 1
-        first_idx = -1
-        
-        while low <= high:
-            mid = (low + high) // 2
-            comp = compare(self._rows[mid][col_idx], value)
-            if comp == 0:
-                first_idx = mid
-                high = mid - 1  # keep searching to the left
-            elif comp < 0:
-                low = mid + 1
+        for idx, value in enumerate(check_values):
+            if value is None:
+                prefix_ok = 0
+            elif not value.startswith(prefix):
+                prefix_ok = 0
             else:
-                high = mid - 1
-                
-        if first_idx == -1:
-            return Table(f"{self.name}_search", self._columns, self._primary_key)
+                prefix_ok = 1
+            self._rows[idx] = self._rows[idx] + (prefix_ok, )
             
-        # Binary search for the last occurrence
-        low = first_idx
-        high = len(self._rows) - 1
-        last_idx = first_idx
+    def atomic_add(self, other: 'Table') -> None:
+        """
+        Očekává jinou tabulku a přidá její obsah na konec tabulky self.
+        Zajišťuje atomicitu (přidá buď všechny řádky, nebo žádný, pokud dojde k chybě).
+        V případě nekompatibilních tabulek vyvolá výjimku ValueError.
+        """
         
-        while low <= high:
-            mid = (low + high) // 2
-            comp = compare(self._rows[mid][col_idx], value)
-            if comp == 0:
-                last_idx = mid
-                low = mid + 1  # keep searching to the right
-            elif comp < 0:
-                low = mid + 1
-            else:
-                high = mid - 1
-                
-        res = Table(f"{self.name}_search", self._columns, self._primary_key)
-        res._rows = self._rows[first_idx : last_idx + 1]
-        return res
 
-
-def aggregate(table: Table, column_name: str) -> Value:
+def count_null(table: Table, columns: list[str]) -> dict[str, int]:
     """
-    Aggregate all values in a column.
-    - If numeric (INT, DECIMAL), returns the sum.
-    - If text or date (TEXT, DATE), returns a comma-separated string of representations.
-    None (NULL) values are ignored. If there are no non-None values:
-    - Returns 0 for numeric.
-    - Returns "" (empty string) for text/date.
+    Spočítá počet hodnot NULL (None) v určených sloupcích tabulky
+    a vrátí slovník mapující jméno sloupce na počet hodnot NULL v tomto sloupci.
     """
-    if column_name not in table._column_index:
-        raise ValueError(f"Unknown column {column_name!r}.")
+    
+    column_names = [column.name for column in table.columns]
+    for column in columns:
+        if column not in column_names:
+            raise ValueError(f"Column {column_name} not found in table {self.name}")
         
-    col_idx = table._column_index[column_name]
-    column = table._column_map[column_name]
-    data_type = column.column_type.data_type
-    
-    # Gather non-None values
-    values = [row[col_idx] for row in table._rows if row[col_idx] is not None]
-    
-    is_numeric = data_type in (DataType.INT, DataType.DECIMAL)
-    
-    if not values:
-        if is_numeric:
-            if data_type == DataType.DECIMAL:
-                return Decimal("0")
-            return 0
-        return ""
+        col_values =  table.get_column(column)
+        for value in col_values:
+            if value is None:
+                null_count[column] += 1
         
-    if is_numeric:
-        return sum(values)
-    else:
-        # Convert values to standard string representation
-        str_values = [value_to_text(v) for v in values]
-        return ",".join(str_values)
 
