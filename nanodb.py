@@ -653,9 +653,9 @@ class Table(Sequence):
         for row in other._rows:
             try:
                 self.insert(list(other._column_map.keys()), row)
-            except Exception:
+            except Exception as E:
                 self._rows = old_rows
-                raise Exception
+                raise E
             
 
 def count_null(table: Table, columns: list[str]) -> dict[str, int]:
