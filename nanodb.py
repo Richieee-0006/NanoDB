@@ -642,14 +642,14 @@ class Table(Sequence):
         names = list(zip(this_columns.keys(), other_columns.keys()))
         columns = list(zip(this_columns.values(), other_columns.values()))
         
-        for idx, this_name, other_name in enumerate(names):
+        for idx, (this_name, other_name) in enumerate(names):
             if this_name != other_name:
                 raise ValueError(f"Tabulky nejsou shodné, názvy {idx}. sloupců. ")
         for idx, this_column, other_column in enumerate(columns):
             if this_column.data_type != other_column.data_type:
                 raise ValueError(f"Tabulky nejsou shodné, datové typy {idx}. sloupců. ")
         for row in other._rows:
-            self._rows = self._rows + row
+            self.insert(other._column_map.keys(), row)
         
 
 def count_null(table: Table, columns: list[str]) -> dict[str, int]:
@@ -662,7 +662,7 @@ def count_null(table: Table, columns: list[str]) -> dict[str, int]:
    
     for column in columns:
         if column not in column_names:
-            raise ValueError(f"Column {column_name} not found in table {self.name}")
+            raise ValueError(f"Column {column_name} not found in table {table.name}")
         count = 0
         col_values =  table.get_column(column)
         for value in col_values:
